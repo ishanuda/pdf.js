@@ -12,7 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* eslint no-var: error */
 
 import { assert } from "../shared/util.js";
 
@@ -44,10 +43,9 @@ class PDFWorkerStream {
     if (this._fullRequestReader) {
       this._fullRequestReader.cancel(reason);
     }
-    const readers = this._rangeRequestReaders.slice(0);
-    readers.forEach(function (reader) {
+    for (const reader of this._rangeRequestReaders.slice(0)) {
       reader.cancel(reason);
-    });
+    }
   }
 }
 

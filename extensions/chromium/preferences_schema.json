@@ -149,7 +149,11 @@
     },
     "renderInteractiveForms": {
       "type": "boolean",
-      "default": false
+      "default": true
+    },
+    "enableScripting": {
+      "type": "boolean",
+      "default": true
     },
     "enablePermissions": {
       "type": "boolean",
@@ -167,9 +171,9 @@
     },
     "enablePrintAutoRotate": {
       "title": "Automatically rotate printed pages",
-      "description": "When enabled, pages whose orientation differ from the first page are rotated when printed.",
+      "description": "When enabled, landscape pages are rotated when printed.",
       "type": "boolean",
-      "default": false
+      "default": true
     },
     "scrollModeOnLoad": {
       "title": "Scroll mode on load",
@@ -194,6 +198,15 @@
         2
       ],
       "default": -1
+    },
+    "viewerCssTheme": {
+      "type": "integer",
+      "enum": [
+        0,
+        1,
+        2
+      ],
+      "default": 0
     }
   }
 }

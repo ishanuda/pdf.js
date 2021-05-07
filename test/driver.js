@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 /* globals pdfjsLib, pdfjsViewer */
 
 "use strict";
@@ -22,6 +23,7 @@ const CMAP_URL = "../external/bcmaps/";
 const CMAP_PACKED = true;
 const IMAGE_RESOURCES_PATH = "/web/images/";
 const WORKER_SRC = "../build/generic/build/pdf.worker.js";
+const RENDER_TASK_ON_CONTINUE_DELAY = 5; // ms
 
 /**
  * @class
@@ -73,32 +75,39 @@ var rasterizeTextLayer = (function rasterizeTextLayerClosure() {
       div.className = "textLayer";
       foreignObject.appendChild(div);
 
-      // Rendering text layer as HTML.
-      var task = pdfjsLib.renderTextLayer({
-        textContent,
-        container: div,
-        viewport,
-        enhanceTextSelection,
-      });
-      Promise.all([stylePromise, task.promise]).then(function (results) {
-        task.expandTextDivs(true);
-        style.textContent = results[0];
-        svg.appendChild(foreignObject);
+      stylePromise
+        .then(async cssRules => {
+          style.textContent = cssRules;
 
-        // We need to have UTF-8 encoded XML.
-        var svg_xml = unescape(
-          encodeURIComponent(new XMLSerializer().serializeToString(svg))
-        );
-        var img = new Image();
-        img.src = "data:image/svg+xml;base64," + btoa(svg_xml);
-        img.onload = function () {
-          ctx.drawImage(img, 0, 0);
-          resolve();
-        };
-        img.onerror = function (e) {
-          reject(new Error("Error rasterizing text layer " + e));
-        };
-      });
+          // Rendering text layer as HTML.
+          var task = pdfjsLib.renderTextLayer({
+            textContent,
+            container: div,
+            viewport,
+            enhanceTextSelection,
+          });
+          await task.promise;
+
+          task.expandTextDivs(true);
+          svg.appendChild(foreignObject);
+
+          // We need to have UTF-8 encoded XML.
+          var svg_xml = unescape(
+            encodeURIComponent(new XMLSerializer().serializeToString(svg))
+          );
+          var img = new Image();
+          img.src = "data:image/svg+xml;base64," + btoa(svg_xml);
+          img.onload = function () {
+            ctx.drawImage(img, 0, 0);
+            resolve();
+          };
+          img.onerror = function (e) {
+            reject(new Error("Error rasterizing text layer " + e));
+          };
+        })
+        .catch(reason => {
+          reject(new Error(`rasterizeTextLayer: "${reason?.message}".`));
+        });
     });
   }
 
@@ -207,45 +216,46 @@ var rasterizeAnnotationLayer = (function rasterizeAnnotationLayerClosure() {
       div.className = "annotationLayer";
 
       // Rendering annotation layer as HTML.
-      stylePromise.then(function (common, overrides) {
-        style.textContent = common + overrides;
+      stylePromise
+        .then(async (common, overrides) => {
+          style.textContent = common + overrides;
 
-        var annotation_viewport = viewport.clone({ dontFlip: true });
-        var parameters = {
-          viewport: annotation_viewport,
-          div,
-          annotations,
-          page,
-          linkService: new pdfjsViewer.SimpleLinkService(),
-          imageResourcesPath,
-          renderInteractiveForms,
-        };
-        pdfjsLib.AnnotationLayer.render(parameters);
+          var annotation_viewport = viewport.clone({ dontFlip: true });
+          var parameters = {
+            viewport: annotation_viewport,
+            div,
+            annotations,
+            page,
+            linkService: new pdfjsViewer.SimpleLinkService(),
+            imageResourcesPath,
+            renderInteractiveForms,
+          };
+          pdfjsLib.AnnotationLayer.render(parameters);
 
-        // Inline SVG images from text annotations.
-        var images = div.getElementsByTagName("img");
-        var imagePromises = inlineAnnotationImages(images);
-        var converted = Promise.all(imagePromises).then(function (data) {
-          var loadedPromises = [];
-          for (var i = 0, ii = data.length; i < ii; i++) {
-            images[i].src = data[i];
-            loadedPromises.push(
-              new Promise(function (resolveImage, rejectImage) {
-                images[i].onload = resolveImage;
-                images[i].onerror = function (e) {
-                  rejectImage(new Error("Error loading image " + e));
-                };
-              })
-            );
-          }
-          return loadedPromises;
-        });
+          // Inline SVG images from text annotations.
+          var images = div.getElementsByTagName("img");
+          var imagePromises = inlineAnnotationImages(images);
 
-        foreignObject.appendChild(div);
-        svg.appendChild(foreignObject);
+          await Promise.all(imagePromises).then(function (data) {
+            var loadedPromises = [];
+            for (var i = 0, ii = data.length; i < ii; i++) {
+              images[i].src = data[i];
+              loadedPromises.push(
+                new Promise(function (resolveImage, rejectImage) {
+                  images[i].onload = resolveImage;
+                  images[i].onerror = function (e) {
+                    rejectImage(new Error("Error loading image " + e));
+                  };
+                })
+              );
+            }
+            return loadedPromises;
+          });
 
-        // We need to have UTF-8 encoded XML.
-        converted.then(function () {
+          foreignObject.appendChild(div);
+          svg.appendChild(foreignObject);
+
+          // We need to have UTF-8 encoded XML.
           var svg_xml = unescape(
             encodeURIComponent(new XMLSerializer().serializeToString(svg))
           );
@@ -258,8 +268,10 @@ var rasterizeAnnotationLayer = (function rasterizeAnnotationLayerClosure() {
           img.onerror = function (e) {
             reject(new Error("Error rasterizing annotation layer " + e));
           };
+        })
+        .catch(reason => {
+          reject(new Error(`rasterizeAnnotationLayer: "${reason?.message}".`));
         });
-      });
     });
   }
 
@@ -380,6 +392,20 @@ var Driver = (function DriverClosure() {
         task.pageNum = task.firstPage || 1;
         task.stats = { times: [] };
 
+        // Support *linked* test-cases for the other suites, e.g. unit- and
+        // integration-tests, without needing to run them as reference-tests.
+        if (task.type === "other") {
+          this._log(`Skipping file "${task.file}"\n`);
+
+          if (!task.link) {
+            this._nextPage(task, 'Expected "other" test-case to be linked.');
+            return;
+          }
+          this.currentTask++;
+          this._nextTask();
+          return;
+        }
+
         this._log('Loading file "' + task.file + '"\n');
 
         const absoluteUrl = new URL(task.file, window.location).href;
@@ -387,7 +413,6 @@ var Driver = (function DriverClosure() {
           const loadingTask = pdfjsLib.getDocument({
             url: absoluteUrl,
             password: task.password,
-            nativeImageDecoderSupport: task.nativeImageDecoderSupport,
             cMapUrl: CMAP_URL,
             cMapPacked: CMAP_PACKED,
             disableRange: task.disableRange,
@@ -397,6 +422,8 @@ var Driver = (function DriverClosure() {
           loadingTask.promise.then(
             doc => {
               task.pdfDoc = doc;
+              task.optionalContentConfigPromise = doc.getOptionalContentConfig();
+
               this._nextPage(task, failure);
             },
             err => {
@@ -519,7 +546,8 @@ var Driver = (function DriverClosure() {
 
               // Initialize various `eq` test subtypes, see comment below.
               var renderAnnotations = false,
-                renderForms = false;
+                renderForms = false,
+                renderPrint = false;
 
               var textLayerCanvas, annotationLayerCanvas;
               var initPromise;
@@ -544,6 +572,7 @@ var Driver = (function DriverClosure() {
                 initPromise = page
                   .getTextContent({
                     normalizeWhitespace: true,
+                    includeMarkedContent: true,
                   })
                   .then(function (textContent) {
                     return rasterizeTextLayer(
@@ -559,6 +588,7 @@ var Driver = (function DriverClosure() {
                 // accidentally changing the behaviour for other types of tests.
                 renderAnnotations = !!task.annotations;
                 renderForms = !!task.forms;
+                renderPrint = !!task.print;
 
                 // Render the annotation layer if necessary.
                 if (renderAnnotations || renderForms) {
@@ -603,7 +633,20 @@ var Driver = (function DriverClosure() {
                 canvasContext: ctx,
                 viewport,
                 renderInteractiveForms: renderForms,
+                optionalContentConfigPromise: task.optionalContentConfigPromise,
               };
+              if (renderPrint) {
+                if (task.annotationStorage) {
+                  const entries = Object.entries(task.annotationStorage),
+                    docAnnotationStorage = task.pdfDoc.annotationStorage;
+                  for (const [key, value] of entries) {
+                    docAnnotationStorage.setValue(key, value);
+                  }
+                  renderContext.includeAnnotationStorage = true;
+                }
+                renderContext.intent = "print";
+              }
+
               var completeRender = function (error) {
                 // if text layer is present, compose it on top of the page
                 if (textLayerCanvas) {
@@ -627,7 +670,15 @@ var Driver = (function DriverClosure() {
               };
               initPromise
                 .then(function () {
-                  return page.render(renderContext).promise.then(function () {
+                  const renderTask = page.render(renderContext);
+
+                  if (task.renderTaskOnContinue) {
+                    renderTask.onContinue = function (cont) {
+                      // Slightly delay the continued rendering.
+                      setTimeout(cont, RENDER_TASK_ON_CONTINUE_DELAY);
+                    };
+                  }
+                  return renderTask.promise.then(function () {
                     completeRender(false);
                   });
                 })

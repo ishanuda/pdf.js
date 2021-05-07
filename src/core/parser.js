@@ -12,17 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* eslint no-var: error */
 
-import {
-  Ascii85Stream,
-  AsciiHexStream,
-  FlateStream,
-  LZWStream,
-  NullStream,
-  PredictorStream,
-  RunLengthStream,
-} from "./stream.js";
 import {
   assert,
   bytesToString,
@@ -44,10 +34,17 @@ import {
   Ref,
 } from "./primitives.js";
 import { isWhiteSpace, MissingDataException } from "./core_utils.js";
+import { Ascii85Stream } from "./ascii_85_stream.js";
+import { AsciiHexStream } from "./ascii_hex_stream.js";
 import { CCITTFaxStream } from "./ccitt_stream.js";
+import { FlateStream } from "./flate_stream.js";
 import { Jbig2Stream } from "./jbig2_stream.js";
 import { JpegStream } from "./jpeg_stream.js";
 import { JpxStream } from "./jpx_stream.js";
+import { LZWStream } from "./lzw_stream.js";
+import { NullStream } from "./stream.js";
+import { PredictorStream } from "./predictor_stream.js";
+import { RunLengthStream } from "./run_length_stream.js";
 
 const MAX_LENGTH_TO_CACHE = 1000;
 const MAX_ADLER32_LENGTH = 5552;
@@ -203,10 +200,11 @@ class Parser {
       I = 0x49,
       SPACE = 0x20,
       LF = 0xa,
-      CR = 0xd;
-    const n = 10,
+      CR = 0xd,
       NUL = 0x0;
-    const startPos = stream.pos;
+    const lexer = this.lexer,
+      startPos = stream.pos,
+      n = 10;
     let state = 0,
       ch,
       maybeEIPos;
@@ -243,6 +241,25 @@ class Parser {
               break;
             }
           }
+
+          if (state !== 2) {
+            continue;
+          }
+          // Check that the "EI" sequence isn't part of the image data, since
+          // that would cause the image to be truncated (fixes issue11124.pdf).
+          if (lexer.knownCommands) {
+            const nextObj = lexer.peekObj();
+            if (nextObj instanceof Cmd && !lexer.knownCommands[nextObj.cmd]) {
+              // Not a valid command, i.e. the inline image data *itself*
+              // contains an "EI" sequence. Resetting the state.
+              state = 0;
+            }
+          } else {
+            warn(
+              "findDefaultInlineStreamEnd - `lexer.knownCommands` is undefined."
+            );
+          }
+
           if (state === 2) {
             break; // Finished!
           }
@@ -748,11 +765,11 @@ class Parser {
       }
       if (name === "DCTDecode" || name === "DCT") {
         xrefStreamStats[StreamType.DCT] = true;
-        return new JpegStream(stream, maybeLength, stream.dict, params);
+        return new JpegStream(stream, maybeLength, params);
       }
       if (name === "JPXDecode" || name === "JPX") {
         xrefStreamStats[StreamType.JPX] = true;
-        return new JpxStream(stream, maybeLength, stream.dict, params);
+        return new JpxStream(stream, maybeLength, params);
       }
       if (name === "ASCII85Decode" || name === "A85") {
         xrefStreamStats[StreamType.A85] = true;
@@ -772,7 +789,7 @@ class Parser {
       }
       if (name === "JBIG2Decode") {
         xrefStreamStats[StreamType.JBIG] = true;
-        return new Jbig2Stream(stream, maybeLength, stream.dict, params);
+        return new Jbig2Stream(stream, maybeLength, params);
       }
       warn(`Filter "${name}" is not supported.`);
       return stream;
@@ -1274,6 +1291,28 @@ class Lexer {
     }
 
     return Cmd.get(str);
+  }
+
+  peekObj() {
+    const streamPos = this.stream.pos,
+      currentChar = this.currentChar,
+      beginInlineImagePos = this.beginInlineImagePos;
+
+    let nextObj;
+    try {
+      nextObj = this.getObj();
+    } catch (ex) {
+      if (ex instanceof MissingDataException) {
+        throw ex;
+      }
+      warn(`peekObj: ${ex}`);
+    }
+    // Ensure that we reset *all* relevant `Lexer`-instance state.
+    this.stream.pos = streamPos;
+    this.currentChar = currentChar;
+    this.beginInlineImagePos = beginInlineImagePos;
+
+    return nextObj;
   }
 
   skipToNextLine() {

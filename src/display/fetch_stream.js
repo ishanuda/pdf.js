@@ -12,7 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* eslint no-var: error */
 
 import {
   AbortException,
@@ -36,7 +35,7 @@ function createFetchOptions(headers, withCredentials, abortController) {
   return {
     method: "GET",
     headers,
-    signal: abortController && abortController.signal,
+    signal: abortController?.signal,
     mode: "cors",
     credentials: withCredentials ? "include" : "same-origin",
     redirect: "follow",
@@ -67,7 +66,7 @@ class PDFFetchStream {
   }
 
   get _progressiveDataLength() {
-    return this._fullRequestReader ? this._fullRequestReader._loaded : 0;
+    return this._fullRequestReader?._loaded ?? 0;
   }
 
   getFullReader() {
@@ -92,10 +91,9 @@ class PDFFetchStream {
     if (this._fullRequestReader) {
       this._fullRequestReader.cancel(reason);
     }
-    const readers = this._rangeRequestReaders.slice(0);
-    readers.forEach(function (reader) {
+    for (const reader of this._rangeRequestReaders.slice(0)) {
       reader.cancel(reason);
-    });
+    }
   }
 }
 
@@ -243,13 +241,20 @@ class PDFFetchStreamRangeReader {
         this._withCredentials,
         this._abortController
       )
-    ).then(response => {
-      if (!validateResponseStatus(response.status)) {
-        throw createResponseStatusError(response.status, url);
-      }
-      this._readCapability.resolve();
-      this._reader = response.body.getReader();
-    });
+    )
+      .then(response => {
+        if (!validateResponseStatus(response.status)) {
+          throw createResponseStatusError(response.status, url);
+        }
+        this._readCapability.resolve();
+        this._reader = response.body.getReader();
+      })
+      .catch(reason => {
+        if (reason?.name === "AbortError") {
+          return;
+        }
+        throw reason;
+      });
 
     this.onProgress = null;
   }

@@ -25,12 +25,17 @@ import {
 } from "../shared/util.js";
 
 class BaseFontLoader {
-  constructor({ docId, onUnsupportedFeature }) {
+  constructor({
+    docId,
+    onUnsupportedFeature,
+    ownerDocument = globalThis.document,
+  }) {
     if (this.constructor === BaseFontLoader) {
       unreachable("Cannot initialize BaseFontLoader.");
     }
     this.docId = docId;
     this._onUnsupportedFeature = onUnsupportedFeature;
+    this._document = ownerDocument;
 
     this.nativeFontFaces = [];
     this.styleElement = null;
@@ -38,15 +43,15 @@ class BaseFontLoader {
 
   addNativeFontFace(nativeFontFace) {
     this.nativeFontFaces.push(nativeFontFace);
-    document.fonts.add(nativeFontFace);
+    this._document.fonts.add(nativeFontFace);
   }
 
   insertRule(rule) {
     let styleElement = this.styleElement;
     if (!styleElement) {
-      styleElement = this.styleElement = document.createElement("style");
+      styleElement = this.styleElement = this._document.createElement("style");
       styleElement.id = `PDFJS_FONT_STYLE_TAG_${this.docId}`;
-      document.documentElement
+      this._document.documentElement
         .getElementsByTagName("head")[0]
         .appendChild(styleElement);
     }
@@ -56,9 +61,9 @@ class BaseFontLoader {
   }
 
   clear() {
-    this.nativeFontFaces.forEach(function (nativeFontFace) {
-      document.fonts.delete(nativeFontFace);
-    });
+    for (const nativeFontFace of this.nativeFontFaces) {
+      this._document.fonts.delete(nativeFontFace);
+    }
     this.nativeFontFaces.length = 0;
 
     if (this.styleElement) {
@@ -116,8 +121,7 @@ class BaseFontLoader {
   }
 
   get isFontLoadingAPISupported() {
-    const supported = typeof document !== "undefined" && !!document.fonts;
-    return shadow(this, "isFontLoadingAPISupported", supported);
+    return shadow(this, "isFontLoadingAPISupported", !!this._document?.fonts);
   }
 
   // eslint-disable-next-line getter-return
@@ -146,8 +150,8 @@ if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
   // PDFJSDev.test('CHROME || GENERIC')
 
   FontLoader = class GenericFontLoader extends BaseFontLoader {
-    constructor(docId) {
-      super(docId);
+    constructor(params) {
+      super(params);
       this.loadingContext = {
         requests: [],
         nextRequestId: 0,
@@ -167,7 +171,7 @@ if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
           const m = /Mozilla\/5.0.*?rv:(\d+).*? Gecko/.exec(
             navigator.userAgent
           );
-          if (m && m[1] >= 14) {
+          if (m?.[1] >= 14) {
             supported = true;
           }
           // TODO - other browsers...
@@ -254,7 +258,7 @@ if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
       let i, ii;
 
       // The temporary canvas is used to determine if fonts are loaded.
-      const canvas = document.createElement("canvas");
+      const canvas = this._document.createElement("canvas");
       canvas.width = 1;
       canvas.height = 1;
       const ctx = canvas.getContext("2d");
@@ -316,22 +320,22 @@ if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
       }
       names.push(loadTestFontId);
 
-      const div = document.createElement("div");
+      const div = this._document.createElement("div");
       div.style.visibility = "hidden";
       div.style.width = div.style.height = "10px";
       div.style.position = "absolute";
       div.style.top = div.style.left = "0px";
 
       for (i = 0, ii = names.length; i < ii; ++i) {
-        const span = document.createElement("span");
+        const span = this._document.createElement("span");
         span.textContent = "Hi";
         span.style.fontFamily = names[i];
         div.appendChild(span);
       }
-      document.body.appendChild(div);
+      this._document.body.appendChild(div);
 
-      isFontReady(loadTestFontId, function () {
-        document.body.removeChild(div);
+      isFontReady(loadTestFontId, () => {
+        this._document.body.removeChild(div);
         request.complete();
       });
       /** Hack end */
@@ -346,7 +350,7 @@ class FontFaceObject {
       isEvalSupported = true,
       disableFontFace = false,
       ignoreErrors = false,
-      onUnsupportedFeature = null,
+      onUnsupportedFeature,
       fontRegistry = null,
     }
   ) {
@@ -366,7 +370,22 @@ class FontFaceObject {
     if (!this.data || this.disableFontFace) {
       return null;
     }
-    const nativeFontFace = new FontFace(this.loadedName, this.data, {});
+    let nativeFontFace;
+    if (!this.cssFontInfo) {
+      nativeFontFace = new FontFace(this.loadedName, this.data, {});
+    } else {
+      const css = {
+        weight: this.cssFontInfo.fontWeight,
+      };
+      if (this.cssFontInfo.italicAngle) {
+        css.style = `oblique ${this.cssFontInfo.italicAngle}deg`;
+      }
+      nativeFontFace = new FontFace(
+        this.cssFontInfo.fontFamily,
+        this.data,
+        css
+      );
+    }
 
     if (this.fontRegistry) {
       this.fontRegistry.registerFont(this);
@@ -378,10 +397,19 @@ class FontFaceObject {
     if (!this.data || this.disableFontFace) {
       return null;
     }
-    const data = bytesToString(new Uint8Array(this.data));
+    const data = bytesToString(this.data);
     // Add the @font-face rule to the document.
     const url = `url(data:${this.mimetype};base64,${btoa(data)});`;
-    const rule = `@font-face {font-family:"${this.loadedName}";src:${url}}`;
+    let rule;
+    if (!this.cssFontInfo) {
+      rule = `@font-face {font-family:"${this.loadedName}";src:${url}}`;
+    } else {
+      let css = `font-weight: ${this.cssFontInfo.fontWeight};`;
+      if (this.cssFontInfo.italicAngle) {
+        css += `font-style: oblique ${this.cssFontInfo.italicAngle}deg;`;
+      }
+      rule = `@font-face {font-family:"${this.cssFontInfo.fontFamily}";${css}src:${url}}`;
+    }
 
     if (this.fontRegistry) {
       this.fontRegistry.registerFont(this, url);
@@ -401,11 +429,9 @@ class FontFaceObject {
       if (!this.ignoreErrors) {
         throw ex;
       }
-      if (this._onUnsupportedFeature) {
-        this._onUnsupportedFeature({
-          featureId: UNSUPPORTED_FEATURES.errorFontGetPath,
-        });
-      }
+      this._onUnsupportedFeature({
+        featureId: UNSUPPORTED_FEATURES.errorFontGetPath,
+      });
       warn(`getPathGenerator - ignoring character: "${ex}".`);
 
       return (this.compiledGlyphs[character] = function (c, size) {

@@ -12,11 +12,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable sort-exports/sort-exports */
 
 import {
   addLinkAttributes,
   getFilenameFromUrl,
+  getPdfFilenameFromUrl,
   isFetchSupported,
+  isPdfFile,
   isValidFetchUrl,
   LinkTarget,
   loadScript,
@@ -39,7 +42,6 @@ import {
   createValidAbsoluteUrl,
   InvalidPDFException,
   MissingPDFException,
-  NativeImageDecoding,
   OPS,
   PasswordResponses,
   PermissionFlag,
@@ -55,6 +57,7 @@ import { apiCompatibilityParams } from "./display/api_compatibility.js";
 import { GlobalWorkerOptions } from "./display/worker_options.js";
 import { renderTextLayer } from "./display/text_layer.js";
 import { SVGGraphics } from "./display/svg.js";
+import { XfaLayer } from "./display/xfa_layer.js";
 
 /* eslint-disable-next-line no-unused-vars */
 const pdfjsVersion =
@@ -125,25 +128,29 @@ if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("PRODUCTION")) {
 }
 
 export {
+  // From "./display/display_utils.js":
   addLinkAttributes,
   getFilenameFromUrl,
+  getPdfFilenameFromUrl,
+  isPdfFile,
   LinkTarget,
   loadScript,
   PDFDateString,
   RenderingCancelledException,
+  // From "./display/api.js":
   build,
   getDocument,
   LoopbackPort,
   PDFDataRangeTransport,
   PDFWorker,
   version,
+  // From "./shared/util.js":
   CMapCompressionType,
   createObjectURL,
   createPromiseCapability,
   createValidAbsoluteUrl,
   InvalidPDFException,
   MissingPDFException,
-  NativeImageDecoding,
   OPS,
   PasswordResponses,
   PermissionFlag,
@@ -153,9 +160,16 @@ export {
   UNSUPPORTED_FEATURES,
   Util,
   VerbosityLevel,
+  // From "./display/annotation_layer.js":
   AnnotationLayer,
+  // From "./display/api_compatibility.js":
   apiCompatibilityParams,
+  // From "./display/worker_options.js":
   GlobalWorkerOptions,
+  // From "./display/text_layer.js":
   renderTextLayer,
+  // From "./display/svg.js":
   SVGGraphics,
+  // From "./display/xfa_layer.js":
+  XfaLayer,
 };
